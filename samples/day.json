@@ -1,0 +1,20 @@
+{
+  "business_day": "2026-11-24",
+  "versions": [
+    {"number": "V1-A", "rules": [{"device": "M1", "input_unit": "kWh", "numerator": 7, "denominator": 2, "source": "C-17"}]},
+    {"number": "V1-B", "rules": [{"device": "M1", "input_unit": "kWh", "numerator": 9, "denominator": 1, "source": "C-18"}]}
+  ],
+  "batches": [
+    {"region": "east", "number": "E-014", "rows": [
+      {"row_number": 9, "device": "M1", "input_unit": "kWh", "reading": 1, "source": "E-014/9"},
+      {"row_number": 2, "device": "M1", "input_unit": "kWh", "reading": 0, "source": "E-014/2"},
+      {"row_number": 5, "device": "M1", "input_unit": "kWh", "reading": null, "source": "E-014/5"}
+    ]},
+    {"region": "east", "number": "E-015", "rows": [
+      {"row_number": 3, "device": "M1", "input_unit": "kWh", "reading": 4, "source": "E-015/3"}
+    ]},
+    {"region": "west", "number": "W-009", "rows": [
+      {"row_number": 8, "device": "M1", "input_unit": "kWh", "reading": 2, "source": "W-009/8"}
+    ]}
+  ]
+}
