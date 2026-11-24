@@ -28,6 +28,7 @@ class VersionDraft:
 class FrozenVersion:
     number: str
     rules: tuple[DeviceRule, ...]
+    retirable: bool = False
 
 
 def validate_rules(rules: Iterable[DeviceRule]) -> tuple[DeviceRule, ...]:

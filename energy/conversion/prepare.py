@@ -38,4 +38,5 @@ def prepare_usage(
         coefficient = rule.coefficient
         lines.append(PreviewLine(position, source, coefficient, rule.source,
                                  convert_reading(source.reading, coefficient)))
-    return warehouse.previews.store_once(batch.receipt, version_number, tuple(lines))
+    return warehouse.previews.store_once(batch.receipt, version_number, tuple(lines),
+                                         retirable=reply.version.retirable)

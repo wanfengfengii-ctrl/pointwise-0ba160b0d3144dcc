@@ -30,6 +30,7 @@ class Preview:
     version_number: str
     lines: tuple[PreviewLine, ...]
     unit: str = OUTPUT_UNIT
+    retirable: bool = False
 
 
 class PreviewRepository:
@@ -44,9 +45,17 @@ class PreviewRepository:
                 receipt_number TEXT NOT NULL REFERENCES received_batches(receipt_number),
                 version_number TEXT NOT NULL,
                 unit TEXT NOT NULL,
+                retirable INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (receipt_number, version_number)
             )
         ''')
+        names = {
+            row['name'] for row in self._db.execute('PRAGMA table_info(previews)').fetchall()
+        }
+        if 'retirable' not in names:
+            self._db.execute(
+                'ALTER TABLE previews ADD COLUMN retirable INTEGER NOT NULL DEFAULT 0'
+            )
         self._db.execute('''
             CREATE TABLE IF NOT EXISTS preview_lines (
                 preview_number TEXT NOT NULL REFERENCES previews(number),
@@ -68,7 +77,7 @@ class PreviewRepository:
 
     def find_by_number(self, number: str) -> Preview | None:
         header = self._db.execute('''
-            SELECT p.number, p.receipt_number, p.version_number, p.unit,
+            SELECT p.number, p.receipt_number, p.version_number, p.unit, p.retirable,
                    b.business_day, b.batch_number
             FROM previews AS p JOIN received_batches AS b USING (receipt_number)
             WHERE p.number = ?
@@ -90,10 +99,11 @@ class PreviewRepository:
             for row in rows
         )
         return Preview(number, self._scope.region, header['business_day'], header['batch_number'],
-                       header['receipt_number'], header['version_number'], lines, header['unit'])
+                       header['receipt_number'], header['version_number'], lines, header['unit'],
+                       bool(header['retirable']))
 
     def store_once(self, receipt: BatchReceipt, version_number: str,
-                   lines: tuple[PreviewLine, ...]) -> Preview:
+                   lines: tuple[PreviewLine, ...], *, retirable: bool = False) -> Preview:
         with transaction(self._db, write=True):
             stored = self.find_by_binding(receipt.receipt_number, version_number)
             if stored is not None:
@@ -101,14 +111,15 @@ class PreviewRepository:
             binding = json.dumps([receipt.receipt_number, version_number], separators=(',', ':'))
             number = self._scope.qualify('preview', binding)
             self._db.execute('''
-                INSERT INTO previews (number, receipt_number, version_number, unit)
-                VALUES (?, ?, ?, ?)
-            ''', (number, receipt.receipt_number, version_number, OUTPUT_UNIT))
+                INSERT INTO previews (number, receipt_number, version_number, unit, retirable)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (number, receipt.receipt_number, version_number, OUTPUT_UNIT,
+                  1 if retirable else 0))
             self._db.executemany('''
                 INSERT INTO preview_lines (preview_number, position, coefficient, rule_source, quantity)
                 VALUES (?, ?, ?, ?, ?)
             ''', ((number, line.position, encode_quantity(line.coefficient), line.rule_source,
                    encode_quantity(line.quantity)) for line in lines))
             preview = Preview(number, self._scope.region, receipt.business_day, receipt.batch_number,
-                              receipt.receipt_number, version_number, lines)
+                              receipt.receipt_number, version_number, lines, OUTPUT_UNIT, retirable)
         return preview

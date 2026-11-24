@@ -5,6 +5,7 @@ import unittest
 
 from energy.conversion.prepare import prepare_usage
 from energy.facts.current import read_current
+from energy.facts.exchange import LocalExchange
 from energy.facts.posting import post_usage
 from energy.facts.warehouse import initialize_warehouse, open_warehouse
 from energy.intake.register import receive_batch
@@ -15,6 +16,7 @@ from energy.storage import DomainError
 from energy.versions.messages import handle_version_lookup
 from energy.versions.publish import publish_version
 from energy.versions.repository import VersionRepository
+from energy.versions.retirement import get_retirement, retire_version
 from energy.versions.rules import DeviceRule, VersionDraft
 
 
@@ -75,6 +77,8 @@ class WarehouseCase(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self._connect(initialize=True)
         self.publish()
+        self.exchange = LocalExchange(
+            self.versions, {'east': self.east, 'west': self.west})
 
     def _connect(self, *, initialize):
         self.versions = VersionRepository(self.catalog_path)
@@ -93,12 +97,14 @@ class WarehouseCase(unittest.TestCase):
     def reopen(self, *, initialize=False):
         self.stack.close()
         self._connect(initialize=initialize)
+        self.exchange = LocalExchange(
+            self.versions, {'east': self.east, 'west': self.west})
 
     def publish(self, version='V1-A', numerator=7, denominator=2, *,
-                unit='kWh', source='C-17'):
+                unit='kWh', source='C-17', retirable=False):
         return publish_version(self.versions, VersionDraft(version, (
             DeviceRule('M1', unit, numerator, denominator, source),
-        )))
+        )), retirable=retirable)
 
     def lookup(self, request):
         return self.messages.call(handle_version_lookup, self.versions, request)
@@ -112,14 +118,21 @@ class WarehouseCase(unittest.TestCase):
     def prepared(self, warehouse, batch, rows, day=DAY, version='V1-A'):
         return self.prepare(warehouse, self.receive(warehouse, batch, rows, day), version)
 
-    def post(self, warehouse, request, preview):
-        return post_usage(warehouse, warehouse.scope.region, request, preview.number)
+    def post(self, warehouse, request, preview, **kwargs):
+        return post_usage(warehouse, warehouse.scope.region, request, preview.number, **kwargs)
 
     def current(self, warehouse, day=DAY):
         return read_current(warehouse, warehouse.scope.region, day)
 
     def freeze(self, warehouse, number, day=DAY):
         return freeze_report(self.reports, warehouse, number, warehouse.scope.region, day)
+
+    def retire(self, number, version, exchange=None):
+        return retire_version(self.versions, number, version,
+                              self.exchange if exchange is None else exchange)
+
+    def retirement(self, number):
+        return get_retirement(self.versions, number)
 
     @contextmanager
     def error(self, code):

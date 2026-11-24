@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 
 from energy.conversion.repository import PreviewRepository
+from energy.facts.gate import RetirementGateRepository
 from energy.facts.repository import FactRepository
 from energy.intake.receipt import BatchRepository
 from energy.intake.scope import WarehouseScope
@@ -15,18 +16,37 @@ class RegionalWarehouse:
     batches: BatchRepository
     previews: PreviewRepository
     facts: FactRepository
+    gate: RetirementGateRepository
     _db: sqlite3.Connection = field(repr=False)
 
     def close(self) -> None:
         self._db.close()
+
+    def scope_check(self, retirement_number: str, version_number: str):
+        """Install a pending hold and read this warehouse's live references.
+
+        The hold and the read happen in one transaction, so a first posting of
+        the version can never slip in between the check and the decision.
+        """
+        with transaction(self._db, write=True):
+            self.gate.hold_now(retirement_number, version_number)
+            return self.facts.list_active_by_version(version_number)
+
+    def settle_hold(self, retirement_number: str, version_number: str, outcome: str) -> None:
+        with transaction(self._db, write=True):
+            if outcome == 'retired':
+                self.gate.make_retired_now(retirement_number, version_number)
+            else:
+                self.gate.release_now(retirement_number, version_number)
 
 
 def _assemble(connection: sqlite3.Connection, scope: WarehouseScope,
               before_commit: CommitHook | None) -> RegionalWarehouse:
     batches = BatchRepository(connection, scope)
     previews = PreviewRepository(connection, scope)
-    facts = FactRepository(connection, scope, previews, before_commit)
-    return RegionalWarehouse(scope, batches, previews, facts, connection)
+    gate = RetirementGateRepository(connection)
+    facts = FactRepository(connection, scope, previews, gate, before_commit)
+    return RegionalWarehouse(scope, batches, previews, facts, gate, connection)
 
 
 def _stored_region(connection: sqlite3.Connection) -> str | None:
@@ -64,6 +84,7 @@ def initialize_warehouse(path: str | Path, region: str, *,
             warehouse.batches.initialize()
             warehouse.previews.initialize()
             warehouse.facts.initialize()
+            warehouse.gate.initialize()
     except BaseException:
         connection.close()
         raise

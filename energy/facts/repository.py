@@ -2,8 +2,10 @@ from dataclasses import dataclass
 import sqlite3
 
 from energy.conversion.repository import Preview, PreviewRepository
+from energy.facts.gate import RetirementGateRepository
 from energy.intake.scope import WarehouseScope
 from energy.storage import CommitHook, DomainError, transaction
+from energy.versions.handoff import GATE_PENDING, GATE_RETIRED
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,10 +31,12 @@ class ReversalReceipt:
 
 class FactRepository:
     def __init__(self, connection: sqlite3.Connection, scope: WarehouseScope,
-                 previews: PreviewRepository, before_commit: CommitHook | None = None):
+                 previews: PreviewRepository, gate: RetirementGateRepository,
+                 before_commit: CommitHook | None = None):
         self._db = connection
         self._scope = scope
         self._previews = previews
+        self._gate = gate
         self._before_commit = before_commit
 
     def initialize(self) -> None:
@@ -83,6 +87,14 @@ class FactRepository:
             preview = self._previews.find_by_number(preview_number)
             if preview is None:
                 raise DomainError('unknown_preview', f'unknown preview {preview_number}')
+            if preview.retirable:
+                state = self._gate.gate_state(preview.version_number)
+                if state == GATE_RETIRED:
+                    raise DomainError('version_retired',
+                                      f'version {preview.version_number} is retired')
+                if state == GATE_PENDING:
+                    raise DomainError('retirement_pending',
+                                      f'version {preview.version_number} has a retirement pending')
             occupied = self._db.execute('''
                 SELECT fact_number FROM facts WHERE preview_number = ?
             ''', (preview_number,)).fetchone()
@@ -100,6 +112,19 @@ class FactRepository:
             if self._before_commit is not None:
                 self._before_commit('post')
         return receipt
+
+    def list_active_by_version(self, version_number: str) -> tuple[Fact, ...]:
+        """Every un-reversed fact of one exact version, on any business day."""
+        rows = self._db.execute('''
+            SELECT f.fact_number, f.sequence, f.preview_number
+            FROM facts AS f
+            JOIN previews AS p ON p.number = f.preview_number
+            WHERE p.version_number = ? AND NOT EXISTS (
+                SELECT 1 FROM reversals AS r WHERE r.fact_number = f.fact_number
+            )
+            ORDER BY f.sequence
+        ''', (version_number,)).fetchall()
+        return tuple(self._restore_fact(row) for row in rows)
 
     def get_reversal_receipt(self, request_number: str) -> ReversalReceipt | None:
         row = self._db.execute('''
